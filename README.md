@@ -1,4 +1,4 @@
-# Objex
+# Open Objex MCP Server
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/objex/objex/main/scripts/install.sh | bash
