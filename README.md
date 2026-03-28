@@ -1,103 +1,25 @@
 # Objex
 
-Objex is an open source MCP server that uses Gemini CLI to discover APIs across an enterprise and make them accessible through a unified Objex server interface.
-
-The project is intended for teams that need a practical way to turn scattered internal and third-party APIs into discoverable, agent-friendly tools without hand-wiring every integration one by one.
-
-## Status
-
-This repository is in the early setup phase. The documentation currently defines the product direction and contribution goals before the server implementation lands.
-
-The first implementation now includes a Python CLI with `install`, `scan`, `update`, and `list` commands.
-
-## Why Objex
-
-Enterprises usually have:
-
-- many APIs spread across teams, gateways, vendors, and legacy systems
-- incomplete or outdated documentation
-- duplicated integration work across internal tools and AI agents
-- no single place where agents can discover what systems exist and how to use them
-
-Objex aims to solve that by combining API discovery with MCP-native access.
-
-## Core Idea
-
-Objex uses Gemini CLI to inspect enterprise environments, identify available APIs, extract useful metadata, and publish those APIs through an MCP server so they can be consumed consistently by compatible clients and agents.
-
-## Planned Capabilities
-
-- Discover APIs from enterprise sources such as OpenAPI specs, gateways, code repositories, service catalogs, and internal docs
-- Normalize discovered endpoints into a common internal model
-- Expose discovered APIs as MCP tools and resources
-- Support incremental rescans so the catalog stays current
-- Attach metadata such as authentication needs, ownership, schemas, environments, and tags
-- Provide guardrails for enterprise usage, including access controls, allowlists, and auditability
-- Reduce manual connector development for internal systems
-
-## High-Level Flow
-
-1. Gemini CLI scans designated enterprise sources.
-2. Objex extracts API definitions, endpoints, schemas, and descriptive metadata.
-3. Objex normalizes and stores the discovered catalog.
-4. The Objex MCP server exposes that catalog to agents and clients as accessible tools.
-5. Teams review, approve, and refine the discovered integrations over time.
-
-## Design Principles
-
-- Open source first
-- Enterprise-ready by default
-- API discovery before manual integration
-- Human review where it matters
-- Clear provenance for discovered capabilities
-- Compatibility with standard MCP workflows
-
-## Use Cases
-
-- Give internal AI agents access to enterprise APIs through one server
-- Accelerate onboarding by making available systems easier to discover
-- Surface undocumented or under-documented APIs
-- Create a searchable inventory of enterprise integrations
-- Reduce repeated integration work across teams
-
-## Repository Goals
-
-Project goals and non-goals are tracked in [goals.md](/Users/mazhar/rabbito/objex/goals.md).
-
-## CLI
-
-The repository includes a generic Python CLI service for registering an Objex user and scanning codebases into generated OpenAPI 3 specs.
-
-### Commands
-
-- `objex install`
-- `objex scan`
-- `objex update`
-- `objex list`
-
-### Local Storage
-
-Profiles and generated specs are stored under `~/.objex/<username>/`.
-
-### Development
-
-Install the package locally:
-
 ```bash
-pip install -e .
+curl -fsSL https://raw.githubusercontent.com/objex/objex/main/scripts/install.sh | bash
 ```
 
-Show command help:
+Turn messy enterprise APIs into an MCP-friendly toolbox with one command, a little scanning, and a lot less yak shaving.
 
-```bash
-objex --help
-```
+## Contributors
 
-## Install
+Objex is for builders who enjoy making hard systems feel easy.
 
-### Linux
+If you want to help, you are in the right place. The project is early, ambitious, and wide open for sharp contributions in the fun parts:
 
-Use a Python virtual environment:
+- MCP server architecture
+- API discovery and normalization
+- Gemini CLI integration
+- OpenAPI generation quality
+- enterprise auth and policy controls
+- developer experience and installation flow
+
+Quick start for local development:
 
 ```bash
 python3 -m venv .venv
@@ -106,52 +28,88 @@ pip install -e .
 objex --help
 ```
 
-You can also use `pipx` if you prefer a user-level CLI install:
+Core commands:
 
-```bash
-pipx install .
-```
+- `objex install`
+- `objex scan`
+- `objex update`
+- `objex list`
 
-### macOS
+Local state lives in `~/.objex/<username>/`.
 
-You can use the same Python-based installation as Linux, or install through Homebrew once the repository is published at the configured GitHub location.
+Project direction lives in [goals.md](/Users/mazhar/rabbito/objex/goals.md).
 
-For a future one-line install command after publishing the repository:
+## What It Does
+
+Objex is an open source MCP server and CLI that uses Gemini CLI to discover APIs across an enterprise and make them accessible through Objex.
+
+The mission is simple: stop forcing every team and every agent to rediscover the same internal APIs from scratch.
+
+## Why It Exists
+
+Most enterprises already have a jungle of:
+
+- internal REST services
+- half-documented partner integrations
+- API gateways with mystery endpoints
+- repos that quietly contain useful routes nobody wrote down
+- AI agents that could help, if only they knew what tools existed
+
+Objex scans codebases and enterprise sources, builds a usable inventory, and turns that inventory into MCP-friendly access.
+
+## How It Works
+
+1. `objex install` registers a user profile with the Objex API.
+2. `objex scan` inspects a codebase for likely REST operations.
+3. Objex generates an OpenAPI 3 spec from the discovered routes.
+4. The spec is stored locally and uploaded to the Objex API.
+5. The broader Objex platform can then expose those capabilities through MCP.
+
+## Install Options
+
+### One-Line Install
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/objex/objex/main/scripts/install.sh | bash
 ```
 
-For a Homebrew install from source:
+### macOS with Homebrew
 
 ```bash
 brew install --HEAD ./Formula/objex.rb
 ```
 
-For a future tap-based install after publishing:
+The formula lives at [Formula/objex.rb](/Users/mazhar/rabbito/objex/Formula/objex.rb).
+
+### Linux or Manual Python Install
 
 ```bash
-brew tap objex/tap
-brew install objex
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e .
+objex --help
 ```
 
-The Homebrew formula lives at [Formula/objex.rb](/Users/mazhar/rabbito/objex/Formula/objex.rb).
+## Current Shape
+
+Today the CLI can:
+
+- register users against `https://api.objex.app/mcp`
+- store local profiles
+- scan Python and JavaScript codebases for common REST route patterns
+- generate OpenAPI 3.0 specs
+- upload discovered codebase specs back to Objex
+
+This is an early foundation, not the finished cathedral.
+
+## Repo Layout
+
+- [objex_cli/cli.py](/Users/mazhar/rabbito/objex/objex_cli/cli.py) contains the command entry points
+- [objex_cli/scanner.py](/Users/mazhar/rabbito/objex/objex_cli/scanner.py) contains route detection and OpenAPI generation
+- [objex_cli/api.py](/Users/mazhar/rabbito/objex/objex_cli/api.py) contains Objex API calls
+- [objex_cli/storage.py](/Users/mazhar/rabbito/objex/objex_cli/storage.py) manages local state
+- [scripts/install.sh](/Users/mazhar/rabbito/objex/scripts/install.sh) installs the CLI
 
 ## License
 
-This project is intended to be released under the Apache License 2.0.
-
-If that is the desired license for the repository, the next step should be adding a standard `LICENSE` file with the Apache 2.0 text.
-
-## Contributing
-
-Contributions are welcome. Early contributions are especially useful in these areas:
-
-- MCP server architecture
-- API discovery pipeline design
-- Gemini CLI integration patterns
-- Security and policy enforcement
-- Catalog normalization and schema modeling
-- Example enterprise connectors and fixtures
-
-As the implementation takes shape, this README should be expanded with setup, local development, configuration, and deployment instructions.
+Apache 2.0. See [LICENSE](/Users/mazhar/rabbito/objex/LICENSE).
