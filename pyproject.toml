@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "objex"
+version = "0.1.0"
+description = "CLI for registering with Objex and scanning codebases into OpenAPI specs."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [
+  { name = "Objex Contributors" }
+]
+dependencies = []
+
+[project.scripts]
+objex = "objex_cli.cli:main"
+
+[tool.setuptools]
+packages = ["objex_cli"]

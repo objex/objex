@@ -1,0 +1,167 @@
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from pathlib import Path
+
+
+SUPPORTED_EXTENSIONS = {".py", ".js", ".jsx", ".ts", ".tsx"}
+TEXT_READ_LIMIT = 512_000
+
+
+@dataclass(frozen=True)
+class RouteMatch:
+    method: str
+    path: str
+    source_file: str
+
+
+PYTHON_VERB_DECORATOR = re.compile(
+    r"@\w+\.(get|post|put|patch|delete|options|head)\(\s*[\"']([^\"']+)[\"']",
+    re.IGNORECASE,
+)
+PYTHON_ROUTE_DECORATOR = re.compile(
+    r"@\w+\.route\(\s*[\"']([^\"']+)[\"'](?P<rest>[^)]*)\)",
+    re.IGNORECASE | re.DOTALL,
+)
+METHODS_LIST = re.compile(r"methods\s*=\s*\[(?P<methods>[^\]]+)\]", re.IGNORECASE)
+STRING_LITERAL = re.compile(r"[\"']([A-Za-z]+)[\"']")
+
+JS_ROUTE_HANDLER = re.compile(
+    r"\b(?:app|router)\.(get|post|put|patch|delete|options|head)\(\s*[\"'`]([^\"'`]+)[\"'`]",
+    re.IGNORECASE,
+)
+DJANGO_PATH = re.compile(r"\bpath\(\s*[\"']([^\"']+)[\"']", re.IGNORECASE)
+DJANGO_RE_PATH = re.compile(r"\bre_path\(\s*r?[\"']([^\"']+)[\"']", re.IGNORECASE)
+
+
+def slugify_codebase(path: Path) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "-", path.name.strip())
+    return cleaned.strip("-") or "codebase"
+
+
+def normalize_path(raw_path: str) -> str:
+    path = raw_path.strip()
+
+    if not path.startswith("/"):
+        path = "/" + path
+
+    path = re.sub(r":([A-Za-z_][A-Za-z0-9_]*)", r"{\1}", path)
+    path = re.sub(r"<(?:[^:>]+:)?([A-Za-z_][A-Za-z0-9_]*)>", r"{\1}", path)
+    path = re.sub(r"/{2,}", "/", path)
+
+    if len(path) > 1 and path.endswith("/"):
+        path = path[:-1]
+
+    return path
+
+
+def iter_source_files(root: Path) -> list[Path]:
+    return sorted(
+        path for path in root.rglob("*") if path.is_file() and path.suffix in SUPPORTED_EXTENSIONS
+    )
+
+
+def parse_methods(raw: str | None) -> list[str]:
+    if not raw:
+        return ["GET"]
+    return [match.group(1).upper() for match in STRING_LITERAL.finditer(raw)] or ["GET"]
+
+
+def scan_codebase(root: Path) -> tuple[dict, list[RouteMatch]]:
+    routes: list[RouteMatch] = []
+
+    for file_path in iter_source_files(root):
+        try:
+            content = file_path.read_text(encoding="utf-8")[:TEXT_READ_LIMIT]
+        except UnicodeDecodeError:
+            continue
+
+        relative_file = str(file_path.relative_to(root))
+
+        for match in PYTHON_VERB_DECORATOR.finditer(content):
+            routes.append(
+                RouteMatch(
+                    method=match.group(1).upper(),
+                    path=normalize_path(match.group(2)),
+                    source_file=relative_file,
+                )
+            )
+
+        for match in PYTHON_ROUTE_DECORATOR.finditer(content):
+            methods_match = METHODS_LIST.search(match.group("rest") or "")
+            for method in parse_methods(methods_match.group("methods") if methods_match else None):
+                routes.append(
+                    RouteMatch(
+                        method=method.upper(),
+                        path=normalize_path(match.group(1)),
+                        source_file=relative_file,
+                    )
+                )
+
+        for match in JS_ROUTE_HANDLER.finditer(content):
+            routes.append(
+                RouteMatch(
+                    method=match.group(1).upper(),
+                    path=normalize_path(match.group(2)),
+                    source_file=relative_file,
+                )
+            )
+
+        for match in DJANGO_PATH.finditer(content):
+            routes.append(
+                RouteMatch(
+                    method="GET",
+                    path=normalize_path(match.group(1)),
+                    source_file=relative_file,
+                )
+            )
+
+        for match in DJANGO_RE_PATH.finditer(content):
+            routes.append(
+                RouteMatch(
+                    method="GET",
+                    path=normalize_path(match.group(1)),
+                    source_file=relative_file,
+                )
+            )
+
+    deduped = sorted(set(routes), key=lambda route: (route.path, route.method, route.source_file))
+    spec = build_openapi_spec(root, deduped)
+    return spec, deduped
+
+
+def build_openapi_spec(root: Path, routes: list[RouteMatch]) -> dict:
+    codebase = slugify_codebase(root)
+    paths: dict[str, dict] = {}
+
+    for route in routes:
+        path_item = paths.setdefault(route.path, {})
+        tag = Path(route.source_file).parts[0] if "/" in route.source_file else "default"
+        path_item[route.method.lower()] = {
+            "summary": f"{route.method} {route.path}",
+            "operationId": make_operation_id(route.method, route.path),
+            "tags": [tag],
+            "responses": {
+                "200": {
+                    "description": "Successful response"
+                }
+            },
+            "x-objex-source-file": route.source_file,
+        }
+
+    return {
+        "openapi": "3.0.3",
+        "info": {
+            "title": f"{codebase} API Inventory",
+            "version": "0.1.0",
+            "description": "Generated by Objex CLI from codebase route detection.",
+        },
+        "paths": paths,
+        "servers": [{"url": "https://example.internal", "description": "Replace with actual server URL"}],
+    }
+
+
+def make_operation_id(method: str, path: str) -> str:
+    normalized = re.sub(r"[^A-Za-z0-9]+", "_", path).strip("_") or "root"
+    return f"{method.lower()}_{normalized}"
