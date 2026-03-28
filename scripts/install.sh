@@ -47,13 +47,5 @@ chmod +x "$BIN_DIR/objex"
 
 echo "Objex installed successfully."
 echo "Binary: $BIN_DIR/objex"
-
-case ":$PATH:" in
-  *":$BIN_DIR:"*)
-    echo "Run: objex --help"
-    ;;
-  *)
-    echo "Add this to your shell profile to use 'objex' directly:"
-    echo "export PATH=\"$BIN_DIR:\$PATH\""
-    ;;
-esac
+echo "Add this to your shell profile to use 'objex' directly:"
+echo "export PATH=\"$BIN_DIR:\$PATH\""
