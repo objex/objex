@@ -57,6 +57,10 @@ def build_parser() -> argparse.ArgumentParser:
     list_parser = subparsers.add_parser("list", help="List locally installed Objex profiles")
     list_parser.set_defaults(handler=handle_list)
 
+    whoami_parser = subparsers.add_parser("whoami", help="Show the locally installed Objex profile")
+    whoami_parser.add_argument("--username")
+    whoami_parser.set_defaults(handler=handle_whoami)
+
     return parser
 
 
@@ -173,6 +177,31 @@ def handle_list(_: argparse.Namespace) -> None:
         return
 
     print(json.dumps(usernames, indent=2))
+
+
+def handle_whoami(args: argparse.Namespace) -> None:
+    usernames = list_profiles()
+    if not usernames:
+        print("No local Objex installations found.", file=sys.stderr)
+        raise SystemExit(1)
+
+    username = args.username
+    if not username:
+        if len(usernames) == 1:
+            username = usernames[0]
+        else:
+            print(
+                "Multiple local Objex installations found. Use 'objex whoami --username <username>'.",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+
+    profile = load_profile(username)
+    if not profile:
+        print(f"No local installation found for '{username}'.", file=sys.stderr)
+        raise SystemExit(1)
+
+    print(json.dumps(profile, indent=2, sort_keys=True))
 
 
 if __name__ == "__main__":
