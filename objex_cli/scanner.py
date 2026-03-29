@@ -150,6 +150,7 @@ def gemini_extract_operations(
         capture_output=True,
         text=True,
         check=False,
+        cwd=root,
     )
     if result.returncode != 0:
         stderr = (result.stderr or "").strip()
