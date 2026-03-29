@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from objex_cli.api import ObjexApiError, get_profile, register_profile, upload_codebase_spec
-from objex_cli.scanner import RouteMatch, scan_codebase, slugify_codebase
+from objex_cli.scanner import GeminiCliNotInstalled, RouteMatch, scan_codebase, slugify_codebase
 from objex_cli.storage import list_profiles, load_profile, save_profile, save_spec
 
 
@@ -31,6 +31,12 @@ def main() -> None:
     try:
         args.handler(args)
     except ObjexApiError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+    except GeminiCliNotInstalled as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+    except RuntimeError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
     except KeyboardInterrupt:
@@ -119,7 +125,7 @@ class ScanUI:
     def announce_route(self, route: RouteMatch) -> None:
         line = f"+ {route.method:<6} {route.path}  [{route.source_file}]"
         if not self.enabled:
-            print(line)
+            print(f"{GREEN}{line}{RESET}")
             return
 
         with self._lock:
@@ -129,7 +135,7 @@ class ScanUI:
 
     def stop(self, message: str) -> None:
         if not self.enabled:
-            print(message)
+            print(f"{GREEN}{message}{RESET}")
             return
 
         self._running = False
@@ -203,7 +209,7 @@ def handle_scan(args: argparse.Namespace) -> None:
 
     codebase_name = args.codebase_name or slugify_codebase(codebase_path)
     scan_ui = ScanUI()
-    scan_ui.start(f"Scanning {codebase_name}")
+    scan_ui.start(f"Scanning {codebase_name} with Gemini CLI")
     spec, routes = scan_codebase(
         codebase_path,
         on_file=scan_ui.update_file,

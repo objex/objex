@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import json
 import re
+import shutil
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 
 SUPPORTED_EXTENSIONS = {".py", ".js", ".jsx", ".ts", ".tsx"}
 TEXT_READ_LIMIT = 512_000
+GEMINI_PROMPT_FILE_LIMIT = 120_000
 
 
 @dataclass(frozen=True)
@@ -34,6 +38,21 @@ JS_ROUTE_HANDLER = re.compile(
 )
 DJANGO_PATH = re.compile(r"\bpath\(\s*[\"']([^\"']+)[\"']", re.IGNORECASE)
 DJANGO_RE_PATH = re.compile(r"\bre_path\(\s*r?[\"']([^\"']+)[\"']", re.IGNORECASE)
+FASTAPI_ROUTER = re.compile(r"\bAPIRouter\b|\bFastAPI\b", re.IGNORECASE)
+BLUEPRINT_HINT = re.compile(r"\bBlueprint\s*\(", re.IGNORECASE)
+
+
+class GeminiCliNotInstalled(RuntimeError):
+    """Raised when Gemini CLI is required but unavailable."""
+
+
+def require_gemini_cli() -> str:
+    gemini_path = shutil.which("gemini")
+    if not gemini_path:
+        raise GeminiCliNotInstalled(
+            "Gemini CLI is not installed. Please install Gemini CLI first, then rerun 'objex scan'."
+        )
+    return gemini_path
 
 
 def slugify_codebase(path: Path) -> str:
@@ -69,19 +88,123 @@ def parse_methods(raw: str | None) -> list[str]:
     return [match.group(1).upper() for match in STRING_LITERAL.finditer(raw)] or ["GET"]
 
 
+def is_candidate_api_file(file_path: Path, content: str) -> bool:
+    lowered = file_path.name.lower()
+    if "openapi" in lowered or "swagger" in lowered:
+        return False
+
+    patterns = (
+        PYTHON_VERB_DECORATOR,
+        PYTHON_ROUTE_DECORATOR,
+        JS_ROUTE_HANDLER,
+        DJANGO_PATH,
+        DJANGO_RE_PATH,
+        FASTAPI_ROUTER,
+        BLUEPRINT_HINT,
+    )
+    return any(pattern.search(content) for pattern in patterns)
+
+
+def parse_gemini_output(raw_output: str) -> dict[str, Any]:
+    lines = raw_output.splitlines()
+    json_start = None
+    for index, line in enumerate(lines):
+        if line.lstrip().startswith("{"):
+            json_start = index
+            break
+
+    if json_start is None:
+        raise RuntimeError("Gemini CLI did not return JSON output.")
+
+    envelope = json.loads("\n".join(lines[json_start:]))
+    response_text = (envelope.get("response") or "").strip()
+    if response_text.startswith("```"):
+        response_text = re.sub(r"^```(?:json)?\s*", "", response_text)
+        response_text = re.sub(r"\s*```$", "", response_text)
+
+    return json.loads(response_text)
+
+
+def gemini_extract_operations(
+    gemini_path: str,
+    root: Path,
+    file_path: Path,
+    content: str,
+) -> list[dict[str, Any]]:
+    relative_file = str(file_path.relative_to(root))
+    prompt = f"""
+You are generating OpenAPI operations from source code.
+
+Rules:
+- Inspect only the actual executable API code in the provided file.
+- Ignore comments, tests, and any existing OpenAPI or Swagger docs.
+- Return only endpoints that are concretely implemented or registered in this file.
+- Do not invent endpoints, schemas, or auth details.
+- Output strict JSON with no markdown fences using this exact shape:
+{{
+  "apis": [
+    {{
+      "method": "GET",
+      "path": "/example",
+      "summary": "Short summary",
+      "operationId": "get_example",
+      "tags": ["module"],
+      "requestBody": null,
+      "responses": {{
+        "200": {{"description": "Successful response"}}
+      }}
+    }}
+  ]
+}}
+
+Path normalization rules:
+- Paths must start with /
+- Convert params like :id, <id>, or <int:id> to {{id}}
+- Use uppercase HTTP methods
+
+Repository root: {root}
+Source file: {relative_file}
+
+Source code:
+```text
+{content[:GEMINI_PROMPT_FILE_LIMIT]}
+```
+""".strip()
+
+    result = subprocess.run(
+        [gemini_path, "-p", prompt, "--output-format", "json"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        stderr = (result.stderr or "").strip()
+        message = stderr or result.stdout.strip() or "unknown Gemini CLI error"
+        raise RuntimeError(f"Gemini CLI failed while scanning {relative_file}: {message}")
+
+    parsed = parse_gemini_output(result.stdout)
+    apis = parsed.get("apis")
+    if not isinstance(apis, list):
+        raise RuntimeError(f"Gemini CLI returned invalid API data for {relative_file}.")
+    return apis
+
+
 def scan_codebase(
     root: Path,
     on_file: Callable[[str], None] | None = None,
     on_route: Callable[[RouteMatch], None] | None = None,
 ) -> tuple[dict, list[RouteMatch]]:
+    gemini_path = require_gemini_cli()
     routes: list[RouteMatch] = []
     seen_routes: set[RouteMatch] = set()
+    operation_map: dict[RouteMatch, dict[str, Any]] = {}
 
-    def record_route(route: RouteMatch) -> None:
+    def record_route(route: RouteMatch, operation: dict[str, Any]) -> None:
         if route in seen_routes:
             return
         seen_routes.add(route)
         routes.append(route)
+        operation_map[route] = operation
         if on_route is not None:
             on_route(route)
 
@@ -95,82 +218,55 @@ def scan_codebase(
         except UnicodeDecodeError:
             continue
 
-        for match in PYTHON_VERB_DECORATOR.finditer(content):
-            record_route(
-                RouteMatch(
-                    method=match.group(1).upper(),
-                    path=normalize_path(match.group(2)),
-                    source_file=relative_file,
-                )
-            )
+        if not is_candidate_api_file(file_path, content):
+            continue
 
-        for match in PYTHON_ROUTE_DECORATOR.finditer(content):
-            methods_match = METHODS_LIST.search(match.group("rest") or "")
-            for method in parse_methods(methods_match.group("methods") if methods_match else None):
-                record_route(
-                    RouteMatch(
-                        method=method.upper(),
-                        path=normalize_path(match.group(1)),
-                        source_file=relative_file,
-                    )
-                )
+        for api in gemini_extract_operations(gemini_path, root, file_path, content):
+            method = str(api.get("method", "")).upper()
+            raw_path = str(api.get("path", "")).strip()
+            if not method or not raw_path:
+                continue
 
-        for match in JS_ROUTE_HANDLER.finditer(content):
-            record_route(
-                RouteMatch(
-                    method=match.group(1).upper(),
-                    path=normalize_path(match.group(2)),
-                    source_file=relative_file,
-                )
+            route = RouteMatch(
+                method=method,
+                path=normalize_path(raw_path),
+                source_file=relative_file,
             )
+            operation = {
+                "summary": api.get("summary") or f"{method} {route.path}",
+                "operationId": api.get("operationId") or make_operation_id(method, route.path),
+                "tags": api.get("tags") or [Path(relative_file).stem],
+                "responses": api.get("responses") or {"200": {"description": "Successful response"}},
+                "x-objex-source-file": relative_file,
+            }
+            if api.get("requestBody") is not None:
+                operation["requestBody"] = api["requestBody"]
 
-        for match in DJANGO_PATH.finditer(content):
-            record_route(
-                RouteMatch(
-                    method="GET",
-                    path=normalize_path(match.group(1)),
-                    source_file=relative_file,
-                )
-            )
+            record_route(route, operation)
 
-        for match in DJANGO_RE_PATH.finditer(content):
-            record_route(
-                RouteMatch(
-                    method="GET",
-                    path=normalize_path(match.group(1)),
-                    source_file=relative_file,
-                )
-            )
     deduped = sorted(routes, key=lambda route: (route.path, route.method, route.source_file))
-    spec = build_openapi_spec(root, deduped)
+    spec = build_openapi_spec(root, deduped, operation_map)
     return spec, deduped
 
 
-def build_openapi_spec(root: Path, routes: list[RouteMatch]) -> dict:
+def build_openapi_spec(
+    root: Path,
+    routes: list[RouteMatch],
+    operation_map: dict[RouteMatch, dict[str, Any]],
+) -> dict:
     codebase = slugify_codebase(root)
     paths: dict[str, dict] = {}
 
     for route in routes:
         path_item = paths.setdefault(route.path, {})
-        tag = Path(route.source_file).parts[0] if "/" in route.source_file else "default"
-        path_item[route.method.lower()] = {
-            "summary": f"{route.method} {route.path}",
-            "operationId": make_operation_id(route.method, route.path),
-            "tags": [tag],
-            "responses": {
-                "200": {
-                    "description": "Successful response"
-                }
-            },
-            "x-objex-source-file": route.source_file,
-        }
+        path_item[route.method.lower()] = operation_map[route]
 
     return {
         "openapi": "3.0.3",
         "info": {
             "title": f"{codebase} API Inventory",
             "version": "0.1.0",
-            "description": "Generated by Objex CLI from codebase route detection.",
+            "description": "Generated by Objex CLI from code analysis using Gemini CLI.",
         },
         "paths": paths,
         "servers": [{"url": "https://example.internal", "description": "Replace with actual server URL"}],
