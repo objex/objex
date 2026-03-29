@@ -1,0 +1,36 @@
+You are generating OpenAPI operations from source code.
+
+Rules:
+- Inspect only the actual executable API code in the provided file.
+- Ignore comments, tests, and any existing OpenAPI or Swagger docs.
+- Return only endpoints that are concretely implemented or registered in this file.
+- Do not invent endpoints, schemas, or auth details.
+- Output strict JSON with no markdown fences using this exact shape:
+{{
+  "apis": [
+    {{
+      "method": "GET",
+      "path": "/example",
+      "summary": "Short summary",
+      "operationId": "get_example",
+      "tags": ["module"],
+      "requestBody": null,
+      "responses": {{
+        "200": {{"description": "Successful response"}}
+      }}
+    }}
+  ]
+}}
+
+Path normalization rules:
+- Paths must start with /
+- Convert params like :id, <id>, or <int:id> to {{id}}
+- Use uppercase HTTP methods
+
+Repository root: {repo_root}
+Source file: {source_file}
+
+Source code:
+```text
+{source_code}
+```

@@ -12,6 +12,8 @@ from typing import Any, Callable
 SUPPORTED_EXTENSIONS = {".py", ".js", ".jsx", ".ts", ".tsx"}
 TEXT_READ_LIMIT = 512_000
 GEMINI_PROMPT_FILE_LIMIT = 120_000
+PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
+GEMINI_SCAN_PROMPT_PATH = PROMPTS_DIR / "gemini_scan_code.txt"
 
 
 @dataclass(frozen=True)
@@ -125,6 +127,15 @@ def parse_gemini_output(raw_output: str) -> dict[str, Any]:
     return json.loads(response_text)
 
 
+def load_gemini_scan_prompt(root: Path, relative_file: str, content: str) -> str:
+    template = GEMINI_SCAN_PROMPT_PATH.read_text(encoding="utf-8")
+    return template.format(
+        repo_root=str(root),
+        source_file=relative_file,
+        source_code=content[:GEMINI_PROMPT_FILE_LIMIT],
+    )
+
+
 def gemini_extract_operations(
     gemini_path: str,
     root: Path,
@@ -132,44 +143,7 @@ def gemini_extract_operations(
     content: str,
 ) -> list[dict[str, Any]]:
     relative_file = str(file_path.relative_to(root))
-    prompt = f"""
-You are generating OpenAPI operations from source code.
-
-Rules:
-- Inspect only the actual executable API code in the provided file.
-- Ignore comments, tests, and any existing OpenAPI or Swagger docs.
-- Return only endpoints that are concretely implemented or registered in this file.
-- Do not invent endpoints, schemas, or auth details.
-- Output strict JSON with no markdown fences using this exact shape:
-{{
-  "apis": [
-    {{
-      "method": "GET",
-      "path": "/example",
-      "summary": "Short summary",
-      "operationId": "get_example",
-      "tags": ["module"],
-      "requestBody": null,
-      "responses": {{
-        "200": {{"description": "Successful response"}}
-      }}
-    }}
-  ]
-}}
-
-Path normalization rules:
-- Paths must start with /
-- Convert params like :id, <id>, or <int:id> to {{id}}
-- Use uppercase HTTP methods
-
-Repository root: {root}
-Source file: {relative_file}
-
-Source code:
-```text
-{content[:GEMINI_PROMPT_FILE_LIMIT]}
-```
-""".strip()
+    prompt = load_gemini_scan_prompt(root, relative_file, content)
 
     result = subprocess.run(
         [gemini_path, "-p", prompt, "--output-format", "json"],
