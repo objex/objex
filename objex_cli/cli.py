@@ -1,34 +1,26 @@
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import re
 import sys
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
 from objex_cli.api import ObjexApiError, get_profile, register_profile, upload_codebase_spec
-from objex_cli.scanner import scan_codebase, slugify_codebase
+from objex_cli.scanner import RouteMatch, scan_codebase, slugify_codebase
 from objex_cli.storage import list_profiles, load_profile, save_profile, save_spec
 
 
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-ASCII_LOGO = r"""
-        ______
-       / __  \
-      / /  \  \
-     / /    \  \
-    / /_____/   \
-   /_____  /  /\ \
-         / /  /  \ \
-        /_/  /____\_\      o
-
-objex
-""".strip("\n")
+GREEN = "\033[92m"
+RESET = "\033[0m"
 
 
 def main() -> None:
-    print(ASCII_LOGO)
     parser = build_parser()
     args = parser.parse_args()
 
@@ -103,6 +95,62 @@ def validate_email(email: str) -> bool:
     return True
 
 
+class ScanUI:
+    def __init__(self) -> None:
+        self.enabled = sys.stdout.isatty()
+        self._message = "Scanning..."
+        self._running = False
+        self._thread: threading.Thread | None = None
+        self._lock = threading.Lock()
+
+    def start(self, message: str) -> None:
+        self._message = message
+        if not self.enabled:
+            print(f"Scanning: {message}")
+            return
+
+        self._running = True
+        self._thread = threading.Thread(target=self._spin, daemon=True)
+        self._thread.start()
+
+    def update_file(self, relative_file: str) -> None:
+        self._message = f"Scanning {relative_file}"
+
+    def announce_route(self, route: RouteMatch) -> None:
+        line = f"+ {route.method:<6} {route.path}  [{route.source_file}]"
+        if not self.enabled:
+            print(line)
+            return
+
+        with self._lock:
+            sys.stdout.write("\r\033[K")
+            sys.stdout.write(f"{GREEN}{line}{RESET}\n")
+            sys.stdout.flush()
+
+    def stop(self, message: str) -> None:
+        if not self.enabled:
+            print(message)
+            return
+
+        self._running = False
+        if self._thread is not None:
+            self._thread.join(timeout=0.3)
+
+        with self._lock:
+            sys.stdout.write("\r\033[K")
+            sys.stdout.write(f"{GREEN}{message}{RESET}\n")
+            sys.stdout.flush()
+
+    def _spin(self) -> None:
+        for frame in itertools.cycle("|/-\\"):
+            if not self._running:
+                return
+            with self._lock:
+                sys.stdout.write(f"\r{GREEN}{frame} {self._message}{RESET}\033[K")
+                sys.stdout.flush()
+            time.sleep(0.08)
+
+
 def handle_install(args: argparse.Namespace) -> None:
     username = args.username or prompt("Username", validate_username)
     company_name = args.company_name or prompt("Company name")
@@ -154,7 +202,14 @@ def handle_scan(args: argparse.Namespace) -> None:
         raise SystemExit(1)
 
     codebase_name = args.codebase_name or slugify_codebase(codebase_path)
-    spec, routes = scan_codebase(codebase_path)
+    scan_ui = ScanUI()
+    scan_ui.start(f"Scanning {codebase_name}")
+    spec, routes = scan_codebase(
+        codebase_path,
+        on_file=scan_ui.update_file,
+        on_route=scan_ui.announce_route,
+    )
+    scan_ui.stop(f"Finished scanning {codebase_name}")
     spec_path = save_spec(username, codebase_name, spec)
 
     response = upload_codebase_spec(username, codebase_name, spec)

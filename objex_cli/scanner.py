@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 
 SUPPORTED_EXTENSIONS = {".py", ".js", ".jsx", ".ts", ".tsx"}
@@ -68,19 +69,34 @@ def parse_methods(raw: str | None) -> list[str]:
     return [match.group(1).upper() for match in STRING_LITERAL.finditer(raw)] or ["GET"]
 
 
-def scan_codebase(root: Path) -> tuple[dict, list[RouteMatch]]:
+def scan_codebase(
+    root: Path,
+    on_file: Callable[[str], None] | None = None,
+    on_route: Callable[[RouteMatch], None] | None = None,
+) -> tuple[dict, list[RouteMatch]]:
     routes: list[RouteMatch] = []
+    seen_routes: set[RouteMatch] = set()
+
+    def record_route(route: RouteMatch) -> None:
+        if route in seen_routes:
+            return
+        seen_routes.add(route)
+        routes.append(route)
+        if on_route is not None:
+            on_route(route)
 
     for file_path in iter_source_files(root):
+        relative_file = str(file_path.relative_to(root))
+        if on_file is not None:
+            on_file(relative_file)
+
         try:
             content = file_path.read_text(encoding="utf-8")[:TEXT_READ_LIMIT]
         except UnicodeDecodeError:
             continue
 
-        relative_file = str(file_path.relative_to(root))
-
         for match in PYTHON_VERB_DECORATOR.finditer(content):
-            routes.append(
+            record_route(
                 RouteMatch(
                     method=match.group(1).upper(),
                     path=normalize_path(match.group(2)),
@@ -91,7 +107,7 @@ def scan_codebase(root: Path) -> tuple[dict, list[RouteMatch]]:
         for match in PYTHON_ROUTE_DECORATOR.finditer(content):
             methods_match = METHODS_LIST.search(match.group("rest") or "")
             for method in parse_methods(methods_match.group("methods") if methods_match else None):
-                routes.append(
+                record_route(
                     RouteMatch(
                         method=method.upper(),
                         path=normalize_path(match.group(1)),
@@ -100,7 +116,7 @@ def scan_codebase(root: Path) -> tuple[dict, list[RouteMatch]]:
                 )
 
         for match in JS_ROUTE_HANDLER.finditer(content):
-            routes.append(
+            record_route(
                 RouteMatch(
                     method=match.group(1).upper(),
                     path=normalize_path(match.group(2)),
@@ -109,7 +125,7 @@ def scan_codebase(root: Path) -> tuple[dict, list[RouteMatch]]:
             )
 
         for match in DJANGO_PATH.finditer(content):
-            routes.append(
+            record_route(
                 RouteMatch(
                     method="GET",
                     path=normalize_path(match.group(1)),
@@ -118,15 +134,14 @@ def scan_codebase(root: Path) -> tuple[dict, list[RouteMatch]]:
             )
 
         for match in DJANGO_RE_PATH.finditer(content):
-            routes.append(
+            record_route(
                 RouteMatch(
                     method="GET",
                     path=normalize_path(match.group(1)),
                     source_file=relative_file,
                 )
             )
-
-    deduped = sorted(set(routes), key=lambda route: (route.path, route.method, route.source_file))
+    deduped = sorted(routes, key=lambda route: (route.path, route.method, route.source_file))
     spec = build_openapi_spec(root, deduped)
     return spec, deduped
 
