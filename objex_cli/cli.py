@@ -59,7 +59,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     scan_parser = subparsers.add_parser("scan", help="Scan a codebase and upload an OpenAPI spec")
     scan_parser.add_argument("--username")
-    scan_parser.add_argument("--codebase", help="Path to the codebase to scan")
+    scan_parser.add_argument("codebase", nargs="?", help="Path to the codebase to scan")
+    scan_parser.add_argument("--codebase-path", dest="codebase_flag", help="Path to the codebase to scan")
     scan_parser.add_argument("--codebase-name", help="Optional identifier used for storage and upload")
     scan_parser.set_defaults(handler=handle_scan)
 
@@ -146,7 +147,7 @@ def handle_scan(args: argparse.Namespace) -> None:
         )
         raise SystemExit(1)
 
-    codebase_input = args.codebase or prompt("Codebase path")
+    codebase_input = args.codebase or args.codebase_flag or prompt("Codebase path")
     codebase_path = Path(codebase_input).expanduser().resolve()
     if not codebase_path.exists() or not codebase_path.is_dir():
         print(f"Codebase path does not exist or is not a directory: {codebase_path}", file=sys.stderr)
