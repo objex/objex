@@ -17,6 +17,21 @@ VENV_DIR="$INSTALL_DIR/.venv"
 REPO_URL="${OBJEX_REPO_URL:-https://github.com/objex/objex.git}"
 REPO_REF="${OBJEX_REPO_REF:-main}"
 
+print_logo() {
+  cat <<'EOF'
+        ______
+       / __  \
+      / /  \  \
+     / /    \  \
+    / /_____/   \
+   /_____  /  /\ \
+         / /  /  \ \
+        /_/  /____\_\      o
+
+objex
+EOF
+}
+
 choose_bin_dir() {
   local candidate
   local path_entry
@@ -118,6 +133,7 @@ EOF
 
 chmod +x "$BIN_DIR/objex"
 
+print_logo
 echo "Objex installed successfully."
 echo "Binary: $BIN_DIR/objex"
 

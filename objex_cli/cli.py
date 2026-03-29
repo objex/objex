@@ -14,15 +14,14 @@ from objex_cli.storage import list_profiles, load_profile, save_profile, save_sp
 
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 ASCII_LOGO = r"""
-   \ 
-    \ 
-     \ 
-      \ 
-   >---\ 
-    \   \
-     \   \
-      \   \
-       \___\    o
+        ______
+       / __  \
+      / /  \  \
+     / /    \  \
+    / /_____/   \
+   /_____  /  /\ \
+         / /  /  \ \
+        /_/  /____\_\      o
 
 objex
 """.strip("\n")
