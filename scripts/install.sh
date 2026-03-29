@@ -18,18 +18,7 @@ REPO_URL="${OBJEX_REPO_URL:-https://github.com/objex/objex.git}"
 REPO_REF="${OBJEX_REPO_REF:-main}"
 
 print_logo() {
-  cat <<'EOF'
-        ______
-       / __  \
-      / /  \  \
-     / /    \  \
-    / /_____/   \
-   /_____  /  /\ \
-         / /  /  \ \
-        /_/  /____\_\      o
-
-objex
-EOF
+  cat "$INSTALL_DIR/logo.txt"
 }
 
 choose_bin_dir() {
