@@ -22,6 +22,34 @@ VENV_DIR="$INSTALL_DIR/.venv"
 BIN_DIR="${OBJEX_BIN_DIR:-$HOME/.local/bin}"
 REPO_URL="${OBJEX_REPO_URL:-https://github.com/objex/objex.git}"
 REPO_REF="${OBJEX_REPO_REF:-main}"
+PATH_EXPORT="export PATH=\"$BIN_DIR:\$PATH\""
+
+detect_shell_profile() {
+  case "${SHELL:-}" in
+    */zsh)
+      echo "${HOME}/.zshrc"
+      ;;
+    */bash)
+      if [[ -f "${HOME}/.bash_profile" ]]; then
+        echo "${HOME}/.bash_profile"
+      else
+        echo "${HOME}/.bashrc"
+      fi
+      ;;
+    *)
+      echo "${HOME}/.profile"
+      ;;
+  esac
+}
+
+ensure_path_in_profile() {
+  local profile_file="$1"
+
+  touch "$profile_file"
+  if ! grep -Fqx "$PATH_EXPORT" "$profile_file"; then
+    printf '\n%s\n' "$PATH_EXPORT" >> "$profile_file"
+  fi
+}
 
 mkdir -p "$INSTALL_DIR" "$BIN_DIR"
 
@@ -45,7 +73,11 @@ EOF
 
 chmod +x "$BIN_DIR/objex"
 
+PROFILE_FILE="$(detect_shell_profile)"
+ensure_path_in_profile "$PROFILE_FILE"
+
 echo "Objex installed successfully."
 echo "Binary: $BIN_DIR/objex"
-echo "Add this to your shell profile to use 'objex' directly:"
-echo "export PATH=\"$BIN_DIR:\$PATH\""
+echo "Updated shell profile: $PROFILE_FILE"
+echo "Run this now to use 'objex' in the current terminal:"
+echo "source \"$PROFILE_FILE\""
