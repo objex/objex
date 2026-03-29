@@ -13,9 +13,23 @@ from objex_cli.storage import list_profiles, load_profile, save_profile, save_sp
 
 
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+ASCII_LOGO = r"""
+   \ 
+    \ 
+     \ 
+      \ 
+   >---\ 
+    \   \
+     \   \
+      \   \
+       \___\    o
+
+objex
+""".strip("\n")
 
 
 def main() -> None:
+    print(ASCII_LOGO)
     parser = build_parser()
     args = parser.parse_args()
 
