@@ -79,6 +79,39 @@ def get_profile(username: str) -> ApiResponse:
     raise last_error
 
 
+def _gateway_base() -> str:
+    override = os.environ.get("OBJEX_API_BASE_URL", "").strip()
+    if override:
+        return override.rstrip("/").rsplit("/mcp", 1)[0]
+    return DEFAULT_BASE_URLS[0].rsplit("/mcp", 1)[0]
+
+
+def fetch_agents(username: str) -> list[dict[str, Any]]:
+    """Fetch registered agents for a user from the Objex Gateway."""
+    url = f"{_gateway_base()}/agents/{parse.quote(username, safe='')}"
+    try:
+        resp = _request_json("GET", url)
+        return resp.data.get("agents", [])
+    except ObjexApiError:
+        return []
+
+
+def save_agent(username: str, agent: dict[str, Any]) -> ApiResponse:
+    """Register or update an agent in the gateway."""
+    safe_user = parse.quote(username, safe="")
+    safe_agent = parse.quote(agent.get("id", ""), safe="")
+    url = f"{_gateway_base()}/agents/{safe_user}/{safe_agent}"
+    return _request_json("POST", url, payload=agent)
+
+
+def save_agent_tools(username: str, agent_id: str, tools: list[dict], environment: str = "dev") -> ApiResponse:
+    """Bulk save tools for an agent in the gateway."""
+    safe_user = parse.quote(username, safe="")
+    safe_agent = parse.quote(agent_id, safe="")
+    url = f"{_gateway_base()}/agents/{safe_user}/{safe_agent}/tools"
+    return _request_json("POST", url, payload={"tools": tools, "environment": environment})
+
+
 def upload_codebase_spec(username: str, codebase: str, spec: dict[str, Any]) -> ApiResponse:
     safe_username = parse.quote(username, safe="")
     safe_codebase = parse.quote(codebase, safe="")

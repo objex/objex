@@ -122,6 +122,20 @@ pip install -e .
 objex --help
 ```
 
+## Agent Scanning
+
+Scan live agents by calling their `/tools` endpoint:
+
+```bash
+# Scan all agents registered for your username
+objex scan --agents --username mycompany
+
+# Scan a specific agent
+objex scan --agents --agent-id smm --username mycompany
+```
+
+This discovers tools dynamically, registers them in the Objex Gateway, and makes them available to the MCP server. Each agent exposes `GET /tools` which returns its routes via runtime introspection — no hardcoding needed.
+
 ## Current Shape
 
 Today the CLI can:
@@ -129,10 +143,10 @@ Today the CLI can:
 - register users against `https://api.objex.app/mcp`
 - store local profiles
 - scan Python and JavaScript codebases for common REST route patterns
+- scan live agents via their `/tools` endpoint
+- register agents and tools in the Objex Gateway
 - generate OpenAPI 3.0 specs
 - upload discovered codebase specs back to Objex
-
-This is an early foundation, not the finished cathedral.
 
 ## Repo Layout
 

@@ -251,3 +251,94 @@ def build_openapi_spec(
 def make_operation_id(method: str, path: str) -> str:
     normalized = re.sub(r"[^A-Za-z0-9]+", "_", path).strip("_") or "root"
     return f"{method.lower()}_{normalized}"
+
+
+# ---------------------------------------------------------------------------
+# Agent scanning via /capabilities
+# ---------------------------------------------------------------------------
+
+def scan_agents(
+    username: str = "",
+    agent_urls: dict[str, str] | None = None,
+    agent_filter: str | None = None,
+    on_agent: Callable[[str, str], None] | None = None,
+    on_route: Callable[[RouteMatch], None] | None = None,
+) -> list[tuple[str, dict, list[RouteMatch]]]:
+    """Scan agents by calling their /tools endpoints.
+
+    agent_urls: dict of {agent_id: domain_url} to scan directly.
+    If not provided, fetches agent list from the gateway for the given username.
+
+    Returns a list of (agent_id, openapi_spec, routes) tuples.
+    """
+    import urllib.request as urlreq
+
+    # Build list of agents to scan
+    agents_to_scan: dict[str, str] = {}
+    if agent_urls:
+        agents_to_scan = dict(agent_urls)
+    elif username:
+        from objex_cli.api import fetch_agents
+        for agent in fetch_agents(username):
+            aid = agent.get("id", "")
+            url = agent.get("domainUrl", "")
+            if aid and url:
+                agents_to_scan[aid] = url
+
+    results: list[tuple[str, dict, list[RouteMatch]]] = []
+
+    for agent_id, domain_url in agents_to_scan.items():
+        if agent_filter and agent_id != agent_filter:
+            continue
+
+        if on_agent:
+            on_agent(agent_id, domain_url)
+
+        # Call GET /tools on the agent
+        tools_list: list[dict] = []
+        try:
+            req = urlreq.Request(f"{domain_url}/tools", headers={"Accept": "application/json"})
+            with urlreq.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            tools_list = data.get("tools", [])
+        except Exception:
+            results.append((agent_id, {}, []))
+            continue
+
+        routes: list[RouteMatch] = []
+        operation_map: dict[RouteMatch, dict[str, Any]] = {}
+
+        for tool in tools_list:
+            method = str(tool.get("method", "POST")).upper()
+            path = normalize_path(str(tool.get("path", "/")))
+            route = RouteMatch(method=method, path=path, source_file=f"{agent_id}:/tools")
+            routes.append(route)
+
+            operation: dict[str, Any] = {
+                "summary": tool.get("description") or f"{method} {path}",
+                "operationId": tool.get("id") or make_operation_id(method, f"{agent_id}{path}"),
+                "tags": [agent_id],
+                "responses": {"200": {"description": "Successful response"}},
+            }
+
+            operation_map[route] = operation
+
+            if on_route:
+                on_route(route)
+
+        # Build OpenAPI spec
+        paths: dict[str, dict] = {}
+        for route in routes:
+            path_item = paths.setdefault(route.path, {})
+            path_item[route.method.lower()] = operation_map[route]
+
+        spec = {
+            "openapi": "3.0.3",
+            "info": {"title": f"{agent_id} API", "version": "1.0.0"},
+            "paths": paths,
+            "servers": [{"url": domain_url, "description": agent_id}],
+        }
+
+        results.append((agent_id, spec, routes))
+
+    return results

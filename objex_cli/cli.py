@@ -10,8 +10,8 @@ import time
 from pathlib import Path
 from typing import Any
 
-from objex_cli.api import ObjexApiError, get_profile, register_profile, upload_codebase_spec
-from objex_cli.scanner import GeminiCliNotInstalled, RouteMatch, scan_codebase, slugify_codebase
+from objex_cli.api import ObjexApiError, get_profile, register_profile, upload_codebase_spec, save_agent, save_agent_tools
+from objex_cli.scanner import GeminiCliNotInstalled, RouteMatch, scan_codebase, scan_agents, slugify_codebase
 from objex_cli.storage import list_profiles, load_profile, save_profile, save_spec
 
 
@@ -60,6 +60,8 @@ def build_parser() -> argparse.ArgumentParser:
     scan_parser.add_argument("codebase", nargs="?", help="Path to the codebase to scan")
     scan_parser.add_argument("--codebase-path", dest="codebase_flag", help="Path to the codebase to scan")
     scan_parser.add_argument("--codebase-name", help="Optional identifier used for storage and upload")
+    scan_parser.add_argument("--agents", action="store_true", help="Scan registered agents via /capabilities instead of local files")
+    scan_parser.add_argument("--agent-id", help="Scan a specific agent by ID (requires --agents)")
     scan_parser.set_defaults(handler=handle_scan)
 
     update_parser = subparsers.add_parser("update", help="Refresh a local profile from Objex API")
@@ -192,6 +194,9 @@ def handle_install(args: argparse.Namespace) -> None:
 
 
 def handle_scan(args: argparse.Namespace) -> None:
+    if getattr(args, "agents", False):
+        return handle_scan_agents(args)
+
     username = args.username or prompt("Username", validate_username)
     profile = load_profile(username)
     if not profile:
@@ -226,6 +231,68 @@ def handle_scan(args: argparse.Namespace) -> None:
     print(f"Scan successful for '{codebase_name}'.")
     print(f"Detected {len(routes)} routes.")
     print(f"Spec saved to {spec_path}")
+
+
+def handle_scan_agents(args: argparse.Namespace) -> None:
+    """Scan agents by calling their /tools endpoints and populating the gateway."""
+    username = args.username or prompt("Username", validate_username)
+    profile = load_profile(username)
+    if not profile:
+        print(
+            f"No local installation found for '{username}'. Run 'objex install' first.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
+    agent_filter = getattr(args, "agent_id", None)
+    environment = os.environ.get("ENVIRONMENT", "dev")
+    scan_ui = ScanUI()
+    scan_ui.start("Scanning agents via /tools")
+
+    results = scan_agents(
+        username=username,
+        agent_filter=agent_filter,
+        on_agent=lambda aid, url: scan_ui.update_file(f"{aid} ({url})"),
+        on_route=scan_ui.announce_route,
+    )
+
+    scan_ui.stop("Finished scanning agents")
+
+    total_tools = 0
+    for agent_id, spec, routes in results:
+        if not routes:
+            continue
+
+        # Register agent in the gateway
+        agent_info = {"id": agent_id, "name": agent_id, "environment": environment}
+        if spec.get("servers"):
+            agent_info["domainUrl"] = spec["servers"][0].get("url", "")
+        try:
+            save_agent(username, agent_info)
+        except ObjexApiError:
+            pass
+
+        # Save tools to the gateway
+        tools = [{"id": r.id, "method": r.method, "path": r.path} for r in routes if hasattr(r, 'id')]
+        if not tools:
+            tools = [{"id": f"{r.method.lower()}_{r.path.strip('/').replace('/', '_') or 'root'}", "method": r.method, "path": r.path} for r in routes]
+        try:
+            save_agent_tools(username, agent_id, tools, environment)
+        except ObjexApiError:
+            pass
+
+        # Also save OpenAPI spec
+        codebase_name = f"agent-{agent_id}"
+        save_spec(username, codebase_name, spec)
+        try:
+            upload_codebase_spec(username, codebase_name, spec)
+        except ObjexApiError:
+            pass
+
+        print(f"  {GREEN}{agent_id}{RESET}: {len(routes)} tools registered")
+        total_tools += len(routes)
+
+    print(f"\nScanned {len(results)} agents, {total_tools} total tools.")
 
 
 def handle_update(args: argparse.Namespace) -> None:
