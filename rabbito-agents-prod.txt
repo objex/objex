@@ -1,0 +1,10 @@
+# Rabbito agents — prod environment
+chat:https://chatagent.rabbito.ai
+smm:https://smmagent.rabbito.ai
+strategist:https://strategistagent.rabbito.ai
+videographer:https://videographeragent.rabbito.ai
+graphicsdesigner:https://graphicsdesigneragent.rabbito.ai
+sdr:https://sdragent.rabbito.ai
+intelligence:https://intelligenceagent.rabbito.ai
+knowledge:https://knowledgeagent.rabbito.ai
+support:https://supportagent.rabbito.ai

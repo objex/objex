@@ -3,7 +3,7 @@ set -euo pipefail
 
 AGENTS_FILE="${AGENTS_FILE:?Set AGENTS_FILE (path to agents.txt)}"
 GATEWAY_URL="${GATEWAY_URL:?Set GATEWAY_URL}"
-USERNAME="${USERNAME:?Set USERNAME}"
+OBJEX_USERNAME="${OBJEX_USERNAME:-${USERNAME:?Set OBJEX_USERNAME or USERNAME}}"
 ENVIRONMENT="${ENVIRONMENT:?Set ENVIRONMENT}"
 
 if [ ! -f "${AGENTS_FILE}" ]; then
@@ -13,7 +13,7 @@ fi
 
 echo "Scanning agents from ${AGENTS_FILE}"
 echo "Gateway: ${GATEWAY_URL}"
-echo "Username: ${USERNAME}"
+echo "Username: ${OBJEX_USERNAME}"
 echo "Environment: ${ENVIRONMENT}"
 echo ""
 
@@ -28,20 +28,23 @@ while IFS=: read -r agent_id agent_url || [ -n "${agent_id}" ]; do
 
   echo "--- ${agent_id} (${agent_url}) ---"
 
-  # Fetch /tools and /docs from the agent
+  # Fetch /tools, /docs, and /schemas from the agent
   tools_json="$(curl -sf "${agent_url}/tools" 2>/dev/null || echo '{"tools":[]}')"
   docs_json="$(curl -sf "${agent_url}/docs" 2>/dev/null || echo '{}')"
+  schemas_json="$(curl -sf "${agent_url}/schemas" 2>/dev/null || echo '{}')"
 
-  # Merge /tools with /docs to produce MCP-compliant tool definitions
-  # Each tool gets: name, description, inputSchema, method, path
+  # Merge /tools + /docs + /schemas to produce MCP-compliant tool definitions
+  # Priority: /schemas (auto-introspected) > /docs requestBody > empty default
   mcp_tools="$(python3 -c "
 import sys, json
 
 tools_raw = json.loads('''${tools_json}''')
 docs_raw = json.loads('''${docs_json}''')
+schemas_raw = json.loads('''${schemas_json}''')
 
 tools = tools_raw.get('tools', [])
 paths = docs_raw.get('paths', {})
+endpoint_schemas = schemas_raw.get('endpoints', {})
 
 mcp_tools = []
 for tool in tools:
@@ -50,7 +53,7 @@ for tool in tools:
     path = tool.get('path', '/')
     method_lower = method.lower()
 
-    # Look up description and requestBody from OpenAPI spec
+    # Look up description from OpenAPI spec
     description = ''
     input_schema = {'type': 'object', 'properties': {}}
 
@@ -64,7 +67,7 @@ for tool in tools:
         if req_body:
             content = req_body.get('content', {})
             json_schema = content.get('application/json', {}).get('schema', {})
-            if json_schema:
+            if json_schema and json_schema.get('properties'):
                 input_schema = json_schema
 
         # Extract from parameters (for GET requests)
@@ -80,6 +83,11 @@ for tool in tools:
                     }
             if props:
                 input_schema = {'type': 'object', 'properties': props}
+
+    # Override with /schemas if available (auto-introspected, more accurate)
+    schema_entry = endpoint_schemas.get(path, {})
+    if schema_entry.get('schema', {}).get('properties'):
+        input_schema = schema_entry['schema']
 
     if not description:
         description = f'{method} {path}'
@@ -100,7 +108,7 @@ print(json.dumps(mcp_tools))
   echo "  Found ${tool_count} tools"
 
   # Register agent in gateway
-  curl -sf -X POST "${GATEWAY_URL}/agents/${USERNAME}/${agent_id}" \
+  curl -sf -X POST "${GATEWAY_URL}/agents/${OBJEX_USERNAME}/${agent_id}" \
     -H "Content-Type: application/json" \
     -d "{\"id\":\"${agent_id}\",\"domainUrl\":\"${agent_url}\",\"environment\":\"${ENVIRONMENT}\"}" \
     >/dev/null 2>&1 \
@@ -114,7 +122,7 @@ tools = json.loads('''${mcp_tools}''')
 print(json.dumps({'tools': tools, 'environment': '${ENVIRONMENT}'}))
 " 2>/dev/null || echo '{"tools":[],"environment":"'"${ENVIRONMENT}"'"}')"
 
-  curl -sf -X POST "${GATEWAY_URL}/agents/${USERNAME}/${agent_id}/tools" \
+  curl -sf -X POST "${GATEWAY_URL}/agents/${OBJEX_USERNAME}/${agent_id}/tools" \
     -H "Content-Type: application/json" \
     -d "${tools_payload}" \
     >/dev/null 2>&1 \
@@ -130,7 +138,7 @@ print(json.dumps({'codebase': '${agent_id}', 'openapi': spec}))
 " 2>/dev/null || echo '')"
 
     if [ -n "${docs_payload}" ]; then
-      curl -sf -X POST "${GATEWAY_URL}/mcp/${USERNAME}/${agent_id}" \
+      curl -sf -X POST "${GATEWAY_URL}/mcp/${OBJEX_USERNAME}/${agent_id}" \
         -H "Content-Type: application/json" \
         -d "${docs_payload}" \
         >/dev/null 2>&1 \
